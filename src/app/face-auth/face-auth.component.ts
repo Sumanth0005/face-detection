@@ -6,6 +6,8 @@ import {
   ViewChild,
 } from '@angular/core';
 import * as faceapi from 'face-api.js';
+import { HttpClient } from '@angular/common/http';
+
 
 @Component({
   selector: 'app-face-auth',
@@ -16,15 +18,18 @@ export class FaceAuthComponent implements OnInit {
   @ViewChild('videoElement', { static: true }) videoRef!: ElementRef<HTMLVideoElement>;
   result: string = '⏳ Initializing...';
   isLoading: boolean = true;
+  referenceImages: HTMLImageElement[] = [];
+
+  constructor(private http: HttpClient) {}
 
   async ngOnInit() {
-    console.log('⏳ Initializing...');
     try {
       await this.loadModels();
-      this.startVideo();
+      await this.startVideo();
+      await this.loadReferenceImages(); // 🧠 New
     } catch (err) {
-      console.error('❌ Error initializing:', err);
-      this.result = '❌ Failed to load models or webcam';
+      console.error('❌ Error:', err);
+      this.result = '❌ Initialization failed';
     }
   }
 
@@ -38,24 +43,80 @@ export class FaceAuthComponent implements OnInit {
     console.log('✅ Models loaded');
   }
 
-  startVideo() {
+  async startVideo() {
     const video = this.videoRef.nativeElement;
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
 
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then((stream) => {
-        video.srcObject = stream;
+    video.onloadeddata = () => {
+      video.play();
+      this.createCanvasOverlay();
+      this.isLoading = false;
+      this.result = '✅ Webcam started';
+    };
+  }
 
-        video.onloadeddata = () => {
-          video.play();
-          this.createCanvasOverlay();
-          this.isLoading = false;
-          this.result = '✅ Webcam started';
-        };
-      })
-      .catch((err) => {
-        console.error('❌ Webcam error:', err);
-        this.result = '❌ Webcam access denied';
+  async loadReferenceImages() {
+    this.result = '📦 Loading reference images...';
+    const metadata: any = await this.http.get('http://localhost:3000/images').toPromise();
+
+    for (const meta of metadata) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous'; // Required for face-api
+      img.src = `http://localhost:3000/image/${meta._id}`;
+      img.alt = meta.name;
+
+      await new Promise((resolve) => {
+        img.onload = () => resolve(true);
       });
+
+      this.referenceImages.push(img);
+    }
+
+    console.log('✅ Loaded reference images:', this.referenceImages.length);
+  }
+
+  async verify() {
+    this.result = '🔍 Verifying...';
+    const video = this.videoRef.nativeElement;
+    const liveDescriptor = await this.getDescriptor(video);
+
+    if (!liveDescriptor) {
+      this.result = '❌ No face detected in webcam';
+      return;
+    }
+
+    const matches: { label: string; distance: number }[] = [];
+
+    for (const img of this.referenceImages) {
+      const refDescriptor = await this.getDescriptor(img);
+
+      if (!refDescriptor) {
+        console.warn(`⚠️ No face in ${img.alt}`);
+        continue;
+      }
+
+      const distance = faceapi.euclideanDistance(refDescriptor, liveDescriptor);
+      matches.push({ label: img.alt, distance });
+    }
+
+    if (matches.length === 0) {
+      this.result = '❌ No valid faces found';
+      return;
+    }
+
+    const bestMatch = matches.reduce((prev, curr) => (curr.distance < prev.distance ? curr : prev));
+    this.result = bestMatch.distance < 0.6
+      ? `✅ Face Matched: ${bestMatch.label}`
+      : '❌ Face Not Matched: Access Denied';
+  }
+
+  async getDescriptor(input: HTMLImageElement | HTMLVideoElement): Promise<Float32Array | null> {
+    const detection = await faceapi
+      .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions())
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+    return detection?.descriptor || null;
   }
 
   createCanvasOverlay() {
@@ -72,77 +133,11 @@ export class FaceAuthComponent implements OnInit {
         .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks()
         .withFaceDescriptors();
-
       const resized = faceapi.resizeResults(detections, displaySize);
       const context = canvas.getContext('2d');
       context?.clearRect(0, 0, canvas.width, canvas.height);
       faceapi.draw.drawDetections(canvas, resized);
       faceapi.draw.drawFaceLandmarks(canvas, resized);
     }, 300);
-  }
-  async verify() {
-    this.result = '🔍 Verifying...';
-  
-    const video = this.videoRef.nativeElement;
-    const liveDescriptor = await this.getDescriptor(video);
-  
-    if (!liveDescriptor) {
-      this.result = '❌ No face detected in webcam';
-      return;
-    }
-  
-    const referenceImages = Array.from(document.getElementsByClassName('reference')) as HTMLImageElement[];
-  
-    const matches: { label: string; distance: number }[] = [];
-  
-    for (const img of referenceImages) {
-      if (!img.complete || img.naturalHeight === 0){
-        console.warn(`⚠️ Image ${img.alt} not fully loaded`);
-        continue;
-      } ;
-      const refDescriptor = await this.getDescriptor(img);
-  
-      if (!refDescriptor) {
-        console.warn(`⚠️ No face detected in image: ${img.alt}`);
-      } else {
-        console.log(`✅ Face detected in ${img.alt}`);
-      }
-    
-      const distance = refDescriptor
-        ? faceapi.euclideanDistance(refDescriptor, liveDescriptor)
-        : null;
-    
-      if (distance !== null) {
-        console.log(`🔬 ${img.alt}: distance = ${distance}`);
-        matches.push({ label: img.alt, distance });
-      }
-    }
-  
-    if (matches.length === 0) {
-      this.result = '❌ No valid reference faces found';
-      return;
-    }
-  
-    // Find best match
-    const bestMatch = matches.reduce((prev, curr) =>
-      curr.distance < prev.distance ? curr : prev
-    );
-  
-    console.log('🔍 Best match:', bestMatch);
-  
-    this.result =
-      bestMatch.distance < 0.6
-        ? `✅ Face Matched: ${bestMatch.label}`
-        : '❌ Face Not Matched: Access Denied';
-  }
-  
-
-  async getDescriptor(input: HTMLImageElement | HTMLVideoElement): Promise<Float32Array | null> {
-    const detection = await faceapi
-      .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks()
-      .withFaceDescriptor();
-
-    return detection?.descriptor || null;
   }
 }
