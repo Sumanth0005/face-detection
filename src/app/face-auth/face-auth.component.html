@@ -1,0 +1,45 @@
+<div id="video-container">
+  <video
+    #videoElement
+    autoplay
+    muted
+    width="640"
+    height="480"
+    class="video"
+  ></video>
+
+  <!-- Hidden reference image -->
+  <img
+    class="reference"
+    src="assets/sumanth.jpg"
+    alt="Reference Face"
+    width="120"
+    style="display: none"
+  />
+  <img
+    class="reference"
+    src="assets/ravi.jpg"
+    alt="Reference Face"
+    width="120"
+    style="display: none"
+  />
+  <img
+    class="reference"
+    src="assets/sai.jpg"
+    alt="Reference Face"
+    width="120"
+    style="display: none"
+  />
+  <img
+    class="reference"
+    src="assets/sandy.jpg"
+    alt="Reference Face"
+    width="120"
+    style="display: none"
+  />
+  <button (click)="verify()" class="verify-btn" [disabled]="isLoading">
+    Verify Face
+  </button>
+
+  <p class="result">{{ result }}</p>
+</div>
